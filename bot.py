@@ -12,8 +12,9 @@ CHAT_IDS = [
     "@tradin_capital"   # REPLACE with actual Chat ID for @tradin_capital
 ]
 
-# API Endpoint (Binance)
+# API Endpoints
 BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
+COINBASE_API_URL = "https://api.coinbase.com/v2/prices/BTC-USD/historic"
 
 # Initialize Telegram Bot
 bot = Bot(TELEGRAM_TOKEN)
@@ -35,6 +36,28 @@ def get_binance_data(step=900, limit=30):
     except Exception as e:
         raise Exception(f"Binance fetch failed: {str(e)}")
 
+# Function to fetch Coinbase OHLC data (fallback)
+def get_coinbase_data(step=900, limit=30):
+    # Coinbase uses granularity in seconds (900 = 15 min), but returns spot-like data; we'll approximate
+    params = {"period": "hour"}  # Limited granularity, we'll fetch more and slice
+    try:
+        response = session.get(COINBASE_API_URL, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()["data"]["prices"]
+        # Take the last 30 entries and approximate OHLC (Coinbase provides spot prices)
+        formatted_data = [{"open": d["price"], "high": d["price"], "low": d["price"], "close": d["price"]} for d in data[:limit]]
+        return formatted_data[::-1]  # Reverse to chronological order
+    except Exception as e:
+        raise Exception(f"Coinbase fetch failed: {str(e)}")
+
+# Function to fetch data with fallback
+def get_data(step=900, limit=30):
+    try:
+        return get_binance_data(step, limit), "Binance"
+    except Exception as binance_error:
+        print(f"⚠️ {binance_error}")
+        return get_coinbase_data(step, limit), "Coinbase"
+
 # Function to calculate 30 MA and current price
 def calculate_ma_and_price(data):
     closes = [float(candle["close"]) for candle in data]
@@ -43,7 +66,7 @@ def calculate_ma_and_price(data):
     return ma_30, current_price
 
 # Function to check if price touches MA
-def is_touching(price, ma, threshold=10.0):  # Increased to 10 USD for testing
+def is_touching(price, ma, threshold=10.0):  # 10 USD threshold for testing
     return abs(price - ma) <= threshold
 
 # Async function to send Telegram signal to multiple channels
@@ -58,15 +81,14 @@ async def send_telegram_signal(price, ma, source):
 
 # Main loop
 async def main():
-    print("📡 TradeLikeBerlin Alpha Bot started with Binance...")
+    print("📡 TradeLikeBerlin Alpha Bot started...")
     last_alert_time = 0
     alert_cooldown = 900  # 15 minutes in seconds
 
     while True:
         try:
-            # Fetch data from Binance
-            data = get_binance_data(step=900, limit=30)
-            source = "Binance"
+            # Fetch data with fallback
+            data, source = get_data(step=900, limit=30)
 
             # Calculate MA and price
             ma_30, current_price = calculate_ma_and_price(data)
@@ -74,7 +96,7 @@ async def main():
             # Check for touch and send signal
             current_time = time.time()
             if is_touching(current_price, ma_30) and (current_time - last_alert_time) >= alert_cooldown:
-                print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
+                print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f} [Source: {source}]")
                 await send_telegram_signal(current_price, ma_30, source)
                 last_alert_time = current_time
 
