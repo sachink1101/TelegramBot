@@ -28,7 +28,8 @@ retries = Retry(total=5, backoff_factor=2, status_forcelist=[502, 503, 504, 429]
 session.mount("https://", HTTPAdapter(max_retries=retries))
 
 # Fetch Binance 15m candle data
-def get_binance_data(symbol="BTCUSD", interval="15m", limit=30):
+
+def get_binance_data(symbol="BTCUSDT", interval="15m", limit=30):
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
         response = session.get(BINANCE_API_URL, params=params, timeout=15)
@@ -36,6 +37,7 @@ def get_binance_data(symbol="BTCUSD", interval="15m", limit=30):
         data = response.json()
         formatted_data = [
             {
+                "timestamp": candle[0],
                 "open": float(candle[1]),
                 "high": float(candle[2]),
                 "low": float(candle[3]),
@@ -48,7 +50,7 @@ def get_binance_data(symbol="BTCUSD", interval="15m", limit=30):
 
 # Calculate 30-period moving average and current price
 def calculate_ma_and_price(data):
-    closes = [candle["close"] for candle in data]
+    closes = [candle["close"] for candle in data[-30:]]
     ma_30 = sum(closes) / len(closes)
     current_price = closes[-1]
     return ma_30, current_price
@@ -67,16 +69,15 @@ async def send_telegram_signal(price, ma):
         except Exception as e:
             print(f"❌ Telegram error for {chat_id}: {str(e)}")
 
-# Send error message to Telegram (with cooldown)
+# Send error message to Telegram (only once per cooldown)
 async def send_telegram_error(message, last_error_time, error_cooldown=14400):
     current_time = time.time()
     if current_time - last_error_time >= error_cooldown:
-        for chat_id in CHAT_IDS:
-            try:
-                await bot.send_message(chat_id=chat_id, text=message)
-                print(f"✅ Sent error to {chat_id}: {message}")
-            except Exception as telegram_error:
-                print(f"❌ Telegram error for {chat_id}: {str(telegram_error)}")
+        try:
+            await bot.send_message(chat_id=CHAT_IDS[0], text=message)
+            print(f"✅ Sent error to {CHAT_IDS[0]}: {message}")
+        except Exception as telegram_error:
+            print(f"❌ Telegram error for {CHAT_IDS[0]}: {str(telegram_error)}")
         return current_time
     return last_error_time
 
@@ -85,20 +86,19 @@ async def main():
     print("📱 TradeLikeBerlin Alpha Bot started with Binance 15m data...")
     last_error_time = 0
     error_cooldown = 14400  # 4 hours
-    signal_sent = False
+    last_alert_timestamp = None
 
     while True:
         try:
             data = get_binance_data()
             ma_30, current_price = calculate_ma_and_price(data)
+            latest_candle_timestamp = data[-1]["timestamp"]
 
             if is_touching(current_price, ma_30):
-                if not signal_sent:
+                if latest_candle_timestamp != last_alert_timestamp:
                     print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
                     await send_telegram_signal(current_price, ma_30)
-                    signal_sent = True
-            else:
-                signal_sent = False  # Reset only when price is no longer touching
+                    last_alert_timestamp = latest_candle_timestamp
 
             await asyncio.sleep(15)
 
