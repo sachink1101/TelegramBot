@@ -12,7 +12,7 @@ TELEGRAM_TOKEN = "7855031635:AAG7CBHRCrwjGwuut47Y6fDLooHNjlX-980"
 
 # Telegram channel IDs
 CHAT_IDS = [
-    "@tradelikeberlinalpha",  # Replace with your actual channels
+    "@tradelikeberlinalpha",
     "@tradin_capital"
 ]
 
@@ -28,7 +28,7 @@ retries = Retry(total=5, backoff_factor=2, status_forcelist=[502, 503, 504, 429]
 session.mount("https://", HTTPAdapter(max_retries=retries))
 
 # Fetch Binance 15m candle data
-def get_binance_data(symbol="BTCUSDT", interval="15m", limit=30):
+def get_binance_data(symbol="BTCUSD", interval="15m", limit=30):
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
         response = session.get(BINANCE_API_URL, params=params, timeout=15)
@@ -83,25 +83,22 @@ async def send_telegram_error(message, last_error_time, error_cooldown=14400):
 # Main async loop
 async def main():
     print("📱 TradeLikeBerlin Alpha Bot started with Binance 15m data...")
-    last_alert_time = 0
     last_error_time = 0
-    alert_cooldown = 900      # 15 minutes
-    error_cooldown = 14400    # 4 hours
-    last_signal = None
+    error_cooldown = 14400  # 4 hours
+    signal_sent = False
 
     while True:
         try:
             data = get_binance_data()
             ma_30, current_price = calculate_ma_and_price(data)
-            current_time = time.time()
 
-            signal_key = f"{round(current_price)}_{round(ma_30)}"
-
-            if is_touching(current_price, ma_30) and signal_key != last_signal:
-                print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
-                await send_telegram_signal(current_price, ma_30)
-                last_alert_time = current_time
-                last_signal = signal_key
+            if is_touching(current_price, ma_30):
+                if not signal_sent:
+                    print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
+                    await send_telegram_signal(current_price, ma_30)
+                    signal_sent = True
+            else:
+                signal_sent = False  # Reset only when price is no longer touching
 
             await asyncio.sleep(15)
 
