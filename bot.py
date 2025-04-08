@@ -16,8 +16,8 @@ CHAT_IDS = [
     "@tradin_capital"
 ]
 
-# Coinbase API endpoint
-COINBASE_API_URL = "https://api.coinbase.com/v2/prices/BTC-USD/historic"
+# Binance API endpoint for 15m candles
+BINANCE_API_URL = "https://api.binance.com/api/v3/klines"
 
 # Setup Telegram Bot
 bot = Bot(token=TELEGRAM_TOKEN)
@@ -27,26 +27,30 @@ session = requests.Session()
 retries = Retry(total=5, backoff_factor=2, status_forcelist=[502, 503, 504, 429])
 session.mount("https://", HTTPAdapter(max_retries=retries))
 
-# Fetch Coinbase price data (approximated as OHLC from spot data)
-def get_coinbase_data(limit=30):
-    params = {"period": "hour"}
+# Fetch Binance 15m candle data
+def get_binance_data(symbol="BTCUSDT", interval="15m", limit=30):
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
-        response = session.get(COINBASE_API_URL, params=params, timeout=15)
+        response = session.get(BINANCE_API_URL, params=params, timeout=15)
         response.raise_for_status()
-        data = response.json()["data"]["prices"]
+        data = response.json()
         formatted_data = [
-            {"open": d["price"], "high": d["price"], "low": d["price"], "close": d["price"]}
-            for d in data[:limit]
+            {
+                "open": float(candle[1]),
+                "high": float(candle[2]),
+                "low": float(candle[3]),
+                "close": float(candle[4])
+            } for candle in data
         ]
-        return formatted_data[::-1]
+        return formatted_data
     except Exception as e:
-        raise Exception(f"Coinbase fetch failed: {str(e)}")
+        raise Exception(f"Binance fetch failed: {str(e)}")
 
 # Calculate 30-period moving average and current price
 def calculate_ma_and_price(data):
-    closes = [float(candle["close"]) for candle in data]
+    closes = [candle["close"] for candle in data]
     ma_30 = sum(closes) / len(closes)
-    current_price = float(data[-1]["close"])
+    current_price = closes[-1]
     return ma_30, current_price
 
 # Check if current price is within threshold of the MA
@@ -54,8 +58,8 @@ def is_touching(price, ma, threshold=10.0):
     return abs(price - ma) <= threshold
 
 # Send signal to Telegram channels
-async def send_telegram_signal(price, ma, source):
-    message = f"🚨 Signal: BTC/USD price ({price:.2f}) touched 30 MA ({ma:.2f}) on {source} (15-min)"
+async def send_telegram_signal(price, ma):
+    message = f"🚨 Signal: BTC/USD price ({price:.2f}) touched 30 MA ({ma:.2f}) in (15-min TF)\n\nHave a look and plan an execution"
     for chat_id in CHAT_IDS:
         try:
             await bot.send_message(chat_id=chat_id, text=message)
@@ -78,23 +82,26 @@ async def send_telegram_error(message, last_error_time, error_cooldown=14400):
 
 # Main async loop
 async def main():
-    print("📡 TradeLikeBerlin Alpha Bot started with Coinbase...")
+    print("📱 TradeLikeBerlin Alpha Bot started with Binance 15m data...")
     last_alert_time = 0
     last_error_time = 0
     alert_cooldown = 900      # 15 minutes
     error_cooldown = 14400    # 4 hours
+    last_signal = None
 
     while True:
         try:
-            data = get_coinbase_data()
+            data = get_binance_data()
             ma_30, current_price = calculate_ma_and_price(data)
-            source = "Coinbase"
-
             current_time = time.time()
-            if is_touching(current_price, ma_30) and (current_time - last_alert_time) >= alert_cooldown:
-                print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f} [Source: {source}]")
-                await send_telegram_signal(current_price, ma_30, source)
+
+            signal_key = f"{round(current_price)}_{round(ma_30)}"
+
+            if is_touching(current_price, ma_30) and signal_key != last_signal:
+                print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
+                await send_telegram_signal(current_price, ma_30)
                 last_alert_time = current_time
+                last_signal = signal_key
 
             await asyncio.sleep(15)
 
