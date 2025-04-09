@@ -28,7 +28,6 @@ retries = Retry(total=5, backoff_factor=2, status_forcelist=[502, 503, 504, 429]
 session.mount("https://", HTTPAdapter(max_retries=retries))
 
 # Fetch Binance 15m candle data
-
 def get_binance_data(symbol="BTCUSDT", interval="15m", limit=30):
     params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
@@ -86,19 +85,22 @@ async def main():
     print("📱 TradeLikeBerlin Alpha Bot started with Binance 15m data...")
     last_error_time = 0
     error_cooldown = 14400  # 4 hours
-    last_alert_timestamp = None
+    last_signal_time = 0
+    signal_cooldown = 900  # 15 minutes in seconds
 
     while True:
         try:
             data = get_binance_data()
             ma_30, current_price = calculate_ma_and_price(data)
-            latest_candle_timestamp = data[-1]["timestamp"]
+            current_time = time.time()
 
             if is_touching(current_price, ma_30):
-                if latest_candle_timestamp != last_alert_timestamp:
+                if current_time - last_signal_time >= signal_cooldown:
                     print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
                     await send_telegram_signal(current_price, ma_30)
-                    last_alert_timestamp = latest_candle_timestamp
+                    last_signal_time = current_time
+                else:
+                    print("⏳ Signal detected but in cooldown. Skipping...")
 
             await asyncio.sleep(15)
 
