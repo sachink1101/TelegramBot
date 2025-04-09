@@ -86,21 +86,26 @@ async def main():
     last_error_time = 0
     error_cooldown = 14400  # 4 hours
     last_signal_time = 0
-    signal_cooldown = 900  # 15 minutes in seconds
+    signal_cooldown = 900  # 15 minutes
+    last_alerted_candle = None
 
     while True:
         try:
             data = get_binance_data()
             ma_30, current_price = calculate_ma_and_price(data)
             current_time = time.time()
+            latest_candle_timestamp = data[-1]["timestamp"]
 
             if is_touching(current_price, ma_30):
-                if current_time - last_signal_time >= signal_cooldown:
+                # Only send if this candle wasn't alerted before AND cooldown passed
+                if (latest_candle_timestamp != last_alerted_candle and
+                        current_time - last_signal_time >= signal_cooldown):
                     print(f"Touch detected: Price {current_price:.2f}, 30 MA {ma_30:.2f}")
                     await send_telegram_signal(current_price, ma_30)
                     last_signal_time = current_time
+                    last_alerted_candle = latest_candle_timestamp
                 else:
-                    print("⏳ Signal detected but in cooldown. Skipping...")
+                    print("⏳ Touch condition met but already alerted for this candle or still cooling down.")
 
             await asyncio.sleep(15)
 
