@@ -60,7 +60,7 @@ def is_touching(price, ma, threshold=10.0):
 
 # Send Telegram Signal
 async def send_telegram_signal(symbol, price, ma):
-    symbol_label = "BTC/USD" if symbol == "BTCUSDT" else "ETH"
+    symbol_label = "BTC/USDT" if symbol == "BTCUSDT" else "ETH/USDT"
     message = f"🚨 Signal: {symbol_label} price ({price:.2f}) touched 30 MA ({ma:.2f}) in (15-min TF)\n\nHave a look and plan an execution"
     for chat_id in CHAT_IDS:
         try:
@@ -86,19 +86,19 @@ async def main():
     print("📱 TradeLikeBerlin Alpha Bot started with Binance 15m data...")
     last_error_time = 0
     signal_cooldown = 900  # 15 minutes
-    last_signal_time = 0
+    last_signal_time = {"BTCUSDT": 0, "ETHUSDT": 0}
     last_alerted_candle = {"BTCUSDT": None, "ETHUSDT": None}
     symbols = ["BTCUSDT", "ETHUSDT"]
 
     while True:
         try:
             current_time = time.time()
-            if current_time - last_signal_time < signal_cooldown:
-                print("🕒 In cooldown. Waiting to scan again...")
-                await asyncio.sleep(15)
-                continue
+            signal_sent = False
 
             for symbol in symbols:
+                if current_time - last_signal_time[symbol] < signal_cooldown:
+                    continue  # Skip if in cooldown for this symbol
+
                 data = get_binance_data(symbol=symbol)
                 ma_30, current_price = calculate_ma_and_price(data)
                 latest_candle_timestamp = data[-1]["timestamp"]
@@ -108,8 +108,12 @@ async def main():
                         print(f"📈 {symbol} touched: Price {current_price:.2f}, MA {ma_30:.2f}")
                         await send_telegram_signal(symbol, current_price, ma_30)
                         last_alerted_candle[symbol] = latest_candle_timestamp
-                        last_signal_time = current_time
-                        break  # ❗ Send only one signal per cooldown period
+                        last_signal_time[symbol] = current_time
+                        signal_sent = True
+                        break  # 🚫 Only one signal per scan cycle
+
+            if not signal_sent:
+                print("🔍 No signal this cycle. Sleeping 15s...")
 
             await asyncio.sleep(15)
 
