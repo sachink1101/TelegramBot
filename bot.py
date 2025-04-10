@@ -55,8 +55,12 @@ def calculate_ma_and_price(data):
     return ma_30, current_price
 
 # Check MA Touch
-def is_touching(price, ma, threshold=10.0):
-    return abs(price - ma) <= threshold
+def is_touching(price, ma, threshold=10.0, min_movement_pct=0.15):
+    diff = abs(price - ma)
+    if diff > threshold:
+        return False
+    movement_pct = (diff / price) * 100
+    return movement_pct >= min_movement_pct
 
 # Send Telegram Signal
 async def send_telegram_signal(symbol, price, ma):
@@ -97,7 +101,7 @@ async def main():
 
             for symbol in symbols:
                 if current_time - last_signal_time[symbol] < signal_cooldown:
-                    continue  # Skip if in cooldown for this symbol
+                    continue  # Cooldown for this symbol
 
                 data = get_binance_data(symbol=symbol)
                 ma_30, current_price = calculate_ma_and_price(data)
@@ -110,7 +114,7 @@ async def main():
                         last_alerted_candle[symbol] = latest_candle_timestamp
                         last_signal_time[symbol] = current_time
                         signal_sent = True
-                        break  # 🚫 Only one signal per scan cycle
+                        break  # Only one signal per scan
 
             if not signal_sent:
                 print("🔍 No signal this cycle. Sleeping 15s...")
