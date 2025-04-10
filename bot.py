@@ -6,8 +6,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # 🔐 API & Telegram Credentials
-API_KEY = "v0MrX39nDUV0rqs5UJXsTf7cAHzaJ1"
-API_SECRET = "SVgMt4S8f3XItZImxypCCXwOxAT577gVhnjGiEyRNNN4jNKbEkhianCQfrCy"
 TELEGRAM_TOKEN = "7855031635:AAG7CBHRCrwjGwuut47Y6fDLooHNjlX-980"
 
 # Telegram Channels
@@ -54,18 +52,15 @@ def calculate_ma_and_price(data):
     current_price = closes[-1]
     return ma_30, current_price
 
-# Check MA Touch
-def is_touching(price, ma, threshold=10.0, min_movement_pct=0.15):
-    diff = abs(price - ma)
-    if diff > threshold:
-        return False
-    movement_pct = (diff / price) * 100
-    return movement_pct >= min_movement_pct
+# Check if price is touching MA (with tighter precision)
+def is_touching(price, ma, percent_threshold=0.2):
+    threshold = ma * (percent_threshold / 100)
+    return abs(price - ma) <= threshold
 
 # Send Telegram Signal
 async def send_telegram_signal(symbol, price, ma):
     symbol_label = "BTC/USDT" if symbol == "BTCUSDT" else "ETH/USDT"
-    message = f"🚨 Signal: {symbol_label} price ({price:.2f}) touched 30 MA ({ma:.2f}) in (15-min TF)\n\nHave a look and plan an execution"
+    message = f"🚨 Signal: {symbol_label} price ({price:.2f}) touched 30 MA ({ma:.2f}) on 15-min TF.\n\nCheck chart for confirmation and execution plan."
     for chat_id in CHAT_IDS:
         try:
             await bot.send_message(chat_id=chat_id, text=message)
@@ -73,7 +68,7 @@ async def send_telegram_signal(symbol, price, ma):
         except Exception as e:
             print(f"❌ Telegram error for {chat_id}: {str(e)}")
 
-# Send Telegram Error
+# Send Telegram Error (with cooldown)
 async def send_telegram_error(message, last_error_time, error_cooldown=14400):
     current_time = time.time()
     if current_time - last_error_time >= error_cooldown:
@@ -101,20 +96,19 @@ async def main():
 
             for symbol in symbols:
                 if current_time - last_signal_time[symbol] < signal_cooldown:
-                    continue  # Cooldown for this symbol
+                    continue  # Still in cooldown for this symbol
 
                 data = get_binance_data(symbol=symbol)
                 ma_30, current_price = calculate_ma_and_price(data)
                 latest_candle_timestamp = data[-1]["timestamp"]
 
-                if is_touching(current_price, ma_30):
+                if is_touching(current_price, ma_30, percent_threshold=0.2):
                     if latest_candle_timestamp != last_alerted_candle[symbol]:
                         print(f"📈 {symbol} touched: Price {current_price:.2f}, MA {ma_30:.2f}")
                         await send_telegram_signal(symbol, current_price, ma_30)
                         last_alerted_candle[symbol] = latest_candle_timestamp
                         last_signal_time[symbol] = current_time
                         signal_sent = True
-                        break  # Only one signal per scan
 
             if not signal_sent:
                 print("🔍 No signal this cycle. Sleeping 15s...")
